@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Web RD Applet</string>
+    <string name="target_url">https://example.com</string>
+</resources>
