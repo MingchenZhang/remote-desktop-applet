@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -41,6 +42,7 @@ class AppletActivity : AppCompatActivity() {
     companion object {
         private const val HIDE_STATUS_BAR = true
         private const val USE_KEY_PRESS_JS_INJECTION = true
+        private const val SCROLL_MULTIPLIER = 20
         const val EXTRA_APPLET_ID = "extra_applet_id"
         const val EXTRA_APPLET_URL = "extra_applet_url"
         const val EXTRA_APPLET_NAME = "extra_applet_name"
@@ -394,6 +396,54 @@ class AppletActivity : AppCompatActivity() {
         if (missingPermissions.isNotEmpty()) {
             requestPermissions(missingPermissions.toTypedArray(), 1)
         }
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_SCROLL && event.isFromSource(InputDevice.SOURCE_CLASS_POINTER)) {
+            val vScroll = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+            val hScroll = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
+            
+            Log.d("AppletActivity", "Scroll event: vScroll=$vScroll, hScroll=$hScroll")
+
+            // Android AXIS_VSCROLL: positive = up/away, negative = down/towards
+            // Web WheelEvent deltaY: positive = down, negative = up
+            // Thus we negate vScroll.
+            // Horizontal: Android AXIS_HSCROLL positive = right, negative = left
+            // Web WheelEvent deltaX: positive = right, negative = left
+            // Thus we keep hScroll as is.
+            
+            injectWheelEvent(-vScroll, hScroll)
+            return true
+        }
+        return super.onGenericMotionEvent(event)
+    }
+
+    private fun injectWheelEvent(vScroll: Float, hScroll: Float) {
+        // Most web-based remote desktop clients (like Selkies/noVNC) expect pixel-based deltas.
+        // Android provides "ticks" (usually 1.0 or -1.0). 
+        // We multiply by a standard factor to simulate pixel scrolling.
+        val deltaY = vScroll * SCROLL_MULTIPLIER
+        val deltaX = hScroll * SCROLL_MULTIPLIER
+
+        val script = """
+            (function() {
+                const event = new WheelEvent('wheel', {
+                    deltaX: $deltaX,
+                    deltaY: $deltaY,
+                    deltaZ: 0,
+                    deltaMode: 0, // 0 = DOM_DELTA_PIXEL
+                    bubbles: true,
+                    cancelable: true
+                });
+                
+                // Dispatch to the element under the cursor if possible, 
+                // or fall back to the active element/document.
+                const target = document.activeElement || document;
+                target.dispatchEvent(event);
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(script, null)
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
